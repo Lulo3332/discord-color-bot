@@ -1,4 +1,5 @@
-require('dotenv').config();
+require('dotenv').config({ path: './.env' });
+
 const {
   Client,
   GatewayIntentBits,
@@ -9,6 +10,13 @@ const {
 } = require('discord.js');
 
 const fs = require("fs");
+
+console.log("TOKEN cargado:", process.env.TOKEN ? "OK" : "NO");
+
+if (!process.env.TOKEN) {
+  console.error("❌ No se encontró el TOKEN en .env");
+  process.exit(1);
+}
 
 const client = new Client({
   intents: [
@@ -41,11 +49,6 @@ const allRoles = Object.values(categories.colores).flat();
   if (!fs.existsSync(file)) fs.writeFileSync(file, '{}');
 });
 
-if (!process.env.TOKEN) {
-  console.error('❌ .env → TOKEN=tu_token');
-  process.exit(1);
-}
-
 const HEX_COLORS = {
   rojo: { hex: '#E53935', emoji: '🔴', name: 'Rojo' },
   naranja: { hex: '#FF9800', emoji: '🟠', name: 'Naranja' },
@@ -60,7 +63,7 @@ const HEX_COLORS = {
 const TONO_NAMES = {
   rojo: ['Cherry', 'Lava', 'Coral', 'Blush', 'RojoOscuro'],
   naranja: ['Flame Orange', 'Caramel', 'Amber', 'Peach', 'Tangerine'],
-  amarillo: ['Gold', 'Peach', 'Mostaza', 'StrawGold', 'Lemon', 'Baige'],
+  amarillo: ['Gold', 'Peach', 'Mostaza', 'StrawGold', 'Lemon'],
   verde: ['Lime', 'Mint', 'Sage', 'Forest', 'Neon'],
   azul: ['Sky', 'Force', 'Steel', 'Alice', 'Bright'],
   violeta: ['Amethyst', 'Lavender', 'Violets', 'Royal', 'Dusty'],
@@ -71,12 +74,23 @@ const TONO_NAMES = {
 const cooldowns = new Map();
 const COOLDOWN_TIME = 2000;
 
+// ================== FILE HANDLING ==================
+
 function loadUsers() {
   try { return JSON.parse(fs.readFileSync("./users.json")); } catch { return {}; }
 }
-function saveUsers(data) { fs.writeFileSync("./users.json", JSON.stringify(data, null, 2)); }
-function loadData() { try { return JSON.parse(fs.readFileSync("./data.json")); } catch { return {}; } }
-function saveData(data) { fs.writeFileSync("./data.json", JSON.stringify(data, null, 2)); }
+function saveUsers(data) {
+  fs.writeFileSync("./users.json", JSON.stringify(data, null, 2));
+}
+
+function loadData() {
+  try { return JSON.parse(fs.readFileSync("./data.json")); } catch { return {}; }
+}
+function saveData(data) {
+  fs.writeFileSync("./data.json", JSON.stringify(data, null, 2));
+}
+
+// ================== EMBEDS ==================
 
 function mainEmbed() {
   return new EmbedBuilder()
@@ -91,6 +105,17 @@ function mainEmbed() {
     )
     .setColor('#E53935');
 }
+
+function shadeEmbed(colorName) {
+  const config = HEX_COLORS[colorName];
+  return new EmbedBuilder()
+    .setTitle(config.emoji + " **" + config.name.toUpperCase() + "**")
+    .setDescription("**Selecciona un tono:**")
+    .setColor(config.hex)
+    .setThumbnail(`https://singlecolorimage.com/get/${colorName}/128x128`);
+}
+
+// ================== BUTTONS ==================
 
 function createMainButtons() {
   return [
@@ -109,42 +134,36 @@ function createMainButtons() {
   ];
 }
 
-function shadeEmbed(colorName) {
-  const config = HEX_COLORS[colorName];
-  return new EmbedBuilder()
-    .setTitle(config.emoji + " **" + config.name.toUpperCase() + "**")
-    .setDescription("**Selecciona un tono:**")
-    .setColor(config.hex)
-    .setThumbnail("https://singlecolorimage.com/get/" + colorName + "/128x128");
-}
-
 function createShadeButtons(colorName) {
   const roles = categories.colores[colorName];
   const tonoNames = TONO_NAMES[colorName];
   const buttons = [];
-  
+
   for (let i = 0; i < roles.length; i++) {
-    buttons.push(new ButtonBuilder()
-      .setCustomId('shade_' + colorName + '_' + i)
-      .setLabel((i + 1) + " - " + tonoNames[i])
-      .setStyle(ButtonStyle.Secondary));
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`shade_${colorName}_${i}`)
+        .setLabel(`${i + 1} - ${tonoNames[i]}`)
+        .setStyle(ButtonStyle.Secondary)
+    );
   }
-  
+
   const rows = [];
   for (let i = 0; i < buttons.length; i += 5) {
     rows.push(new ActionRowBuilder().addComponents(buttons.slice(i, i + 5)));
   }
-  
+
   return rows;
 }
 
-client.on("clientReady", async () => {
-  console.log("\n🚀 Color Bot Iniciado");
+// ================== READY ==================
+
+client.once("ready", async () => {
+  console.log(`🚀 Bot iniciado como ${client.user.tag}`);
   console.log("📍 Canal:", CHANNEL_ID);
-  console.log("🎨 Colores disponibles:", Object.keys(HEX_COLORS).join(", "));
 
   try {
-    const channel = client.channels.cache.get(CHANNEL_ID) || await client.channels.fetch(CHANNEL_ID);
+    const channel = await client.channels.fetch(CHANNEL_ID);
     let data = loadData();
     let message = null;
 
@@ -162,14 +181,18 @@ client.on("clientReady", async () => {
 
       data.messageId = message.id;
       saveData(data);
-      console.log("✅ Menú enviado correctamente");
+
+      console.log("✅ Menú enviado");
     } else {
       console.log("✅ Menú ya existe");
     }
+
   } catch (error) {
     console.error("❌ Error en ready:", error.message);
   }
 });
+
+// ================== INTERACTIONS ==================
 
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isButton()) return;
@@ -178,6 +201,7 @@ client.on("interactionCreate", async (interaction) => {
   const customId = interaction.customId;
   const now = Date.now();
 
+  // ✅ COOLDOWN FIXED
   if (cooldowns.has(userId) && now < cooldowns.get(userId) + COOLDOWN_TIME) {
     return interaction.reply({
       content: "⏳ Espera " + Math.ceil((cooldowns.get(userId) + COOLDOWN_TIME - now) / 1000) + "s",
@@ -188,13 +212,13 @@ client.on("interactionCreate", async (interaction) => {
   cooldowns.set(userId, now);
   setTimeout(() => cooldowns.delete(userId), COOLDOWN_TIME);
 
+  // ===== COLOR =====
   if (customId.startsWith('color_')) {
     try {
       await interaction.deferReply({ ephemeral: true });
 
       const colorName = customId.replace('color_', '');
-      
-      console.log("🔘", colorName.toUpperCase(), "→", interaction.user.tag);
+      console.log("🎨 Color elegido:", colorName, "por", interaction.user.tag);
 
       await interaction.editReply({
         embeds: [shadeEmbed(colorName)],
@@ -203,92 +227,62 @@ client.on("interactionCreate", async (interaction) => {
 
     } catch (error) {
       console.error("❌ Error seleccionando color:", error);
-      try {
-        await interaction.editReply({
-          content: "❌ Ocurrió un error: " + error.message,
-          components: []
-        });
-      } catch (editError) {
-        console.error("❌ Error editando respuesta:", editError);
-      }
     }
     return;
   }
 
+  // ===== TONO =====
   if (customId.startsWith('shade_')) {
     try {
       await interaction.deferReply({ ephemeral: true });
 
-      const parts = customId.split('_');
-      const colorName = parts[1];
-      const shadeIndex = parseInt(parts[2]);
-      const roleId = categories.colores[colorName][shadeIndex];
-      const hexColor = HEX_COLORS[colorName].hex;
-      const tonoName = TONO_NAMES[colorName][shadeIndex];
+      const [_, colorName, index] = customId.split('_');
+      const roleId = categories.colores[colorName][index];
+      const tonoName = TONO_NAMES[colorName][index];
 
-      console.log("👤 Obteniendo miembro:", userId);
-      const member = await interaction.guild.members.fetch(userId).catch(err => {
-        console.error("❌ Error obteniendo miembro:", err);
-        throw err;
-      });
+      console.log("👤 Usuario:", userId);
+      const member = await interaction.guild.members.fetch(userId);
 
-      console.log("🔄 Removiendo roles antiguos...");
-      for (const rId of allRoles) {
-        await member.roles.remove(rId).catch(err => {
-          console.error("⚠️ Error removiendo rol", rId, ":", err.message);
-        });
+      console.log("🔄 Limpiando roles...");
+      for (const r of allRoles) {
+        await member.roles.remove(r).catch(() => {});
       }
 
-      console.log("✨ Añadiendo nuevo rol:", roleId);
-      await member.roles.add(roleId).catch(err => {
-        console.error("❌ Error añadiendo rol:", err);
-        throw err;
-      });
+      console.log("✨ Asignando rol:", roleId);
+      await member.roles.add(roleId);
 
       const users = loadUsers();
       users[userId] = {
         color: colorName,
-        hex: hexColor,
         role: roleId,
-        tono: shadeIndex + 1,
-        tonoName: tonoName,
+        tono: index,
+        tonoName,
         time: Date.now()
       };
       saveUsers(users);
 
-      const successEmbed = new EmbedBuilder()
-        .setTitle("✅ **¡Color ASIGNADO!**")
-        .setDescription(
-          "**Color:** " + HEX_COLORS[colorName].name + "\n" +
-          "**Tono:** " + tonoName + " (" + (shadeIndex + 1) + "/" + categories.colores[colorName].length + ")"
-        )
-        .setColor(hexColor)
-        .setThumbnail("https://singlecolorimage.com/get/" + colorName + "/128x128");
+      const embed = new EmbedBuilder()
+        .setTitle("✅ Color asignado")
+        .setDescription(`**${HEX_COLORS[colorName].name}** → ${tonoName}`)
+        .setColor(HEX_COLORS[colorName].hex);
 
       await interaction.editReply({
-        embeds: [successEmbed],
+        embeds: [embed],
         components: []
       });
 
-      console.log("✅ Rol asignado a", interaction.user.tag, "-", colorName, tonoName);
+      console.log("✅ Rol asignado correctamente");
 
     } catch (error) {
-      console.error("❌ Error asignando tono:", error);
-      const errorEmbed = new EmbedBuilder()
-        .setTitle("❌ Error")
-        .setDescription("No se pudo asignar el rol: " + error.message)
-        .setColor('#E53935');
+      console.error("❌ Error asignando rol:", error);
 
-      try {
-        await interaction.editReply({
-          embeds: [errorEmbed],
-          components: []
-        });
-      } catch (editError) {
-        console.error("❌ Error editando respuesta de error:", editError);
-      }
+      await interaction.editReply({
+        content: "❌ Error al asignar rol: " + error.message
+      });
     }
   }
 });
+
+// ================== LOGIN ==================
 
 client.login(process.env.TOKEN);
